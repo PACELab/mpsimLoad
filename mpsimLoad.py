@@ -12,24 +12,25 @@ from ZipfGenerator import ZipfGenerator
 #import logging
 
 sizes=[str(i).zfill(5) for i in xrange(1,10001)]
-indexes=[str(i).zfill(5) for i in xrange(0,100000)]
+indexes=[str(i).zfill(5) for i in xrange(0,1000000)]
 
 #def sendRequest(db,mc,lf,zg):
 def sendRequest(db,mc,lf):
-	p=0.1
+	p=0.05
 	for i in xrange(0,1):
 		# both random variables are used as index so it is +1 usually
-#		valsize=(np.random.geometric(p)-1)%10000
-		valsize=random.randint(0,100-1)
+		valsize=(np.random.geometric(p)-1)%10000
+#		valsize=random.randint(0,100-1)
 		if valsize<100: # remember it is a index
-			indx=random.randint(0,100000-1)
+			indx=random.randint(0,1000000-1)
 		elif (valsize+1)<1000: # valsize is index, actual size is +1
-			indx=random.randint(0,10000-1)
+			indx=random.randint(0,100000-1)
 		else:
 			indx=random.randint(0,500-1)
 
 		key=''.join([sizes[valsize],indexes[indx]])
 #		break
+		st=time.time()
 		while True:
 			try:
 				val=mc.get(key)
@@ -69,7 +70,11 @@ def sendRequest(db,mc,lf):
 					exc_type, exc_obj, exc_tb = sys.exc_info()
 					lf.write("key: %s, excptn in MC set: %s\n"%( key, str(exc_type) ) )
 					lf.flush()
-					break			
+					break
+			return (time.time()-st,False) # miss in cache
+		else:
+			return (time.time()-st,True) # hit in cache
+		
 
 
 def init_worker():
@@ -99,22 +104,26 @@ def doWork(p_i,lambd,nbr_req,rates):
 			i+=1
 			st=time.time()
 	#		sendRequest(db,mc,None)
-			sendRequest(db,mc,lf)
-	#		sendRequest(db,mc,lf,zipfgen)	
-			el=time.time()-st
-			line="%s %fms\n"%(datetime.now().strftime('%H:%M:%S '),el*1000)
+			ret=sendRequest(db,mc,lf) # contains (RT,hit)
+	#		sendRequest(db,mc,lf,zipfgen)
+			el=time.time()-st # total time spent in function
+			line="%s %f %f %i\n"%(datetime.now().strftime('%H:%M:%S'),el*1000,ret[0]*1000,ret[1])
 			lf.write(line)
 			wt=random.expovariate(lambd)
 			time.sleep(wt)
 	else:
 		for tup in rates:
 			i=0
+			if p_i==1:
+				print tup
+				sys.stdout.flush()
+				
 			while i<=tup[1]:
 				i+=1
 				st=time.time()
-				sendRequest(db,mc,lf)
-				el=time.time()-st
-				line="%s %fms\n"%(datetime.now().strftime('%H:%M:%S '),el*1000)
+				ret=sendRequest(db,mc,lf) # contains (RT,hit)
+				el=time.time()-st # total time spent in function
+				line="%s %f %f %i\n"%(datetime.now().strftime('%H:%M:%S'),el*1000,ret[0]*1000,ret[1])
 				lf.write(line)
 				wt=random.expovariate(tup[0]) # (rr,nr) expovariate takes 1/mean of exponential which is RR
 				time.sleep(wt)
@@ -134,7 +143,7 @@ def main(concurrent,n,lambd,iafile):
 		rates=[]
 		for line in iafile:
 			rr , nr=line.partition(" ")[::2]
-			rr , nr=int(rr)/concurrent,int(nr)/float(concurrent)
+			rr , nr=float(rr)/concurrent,int(nr)/float(concurrent)
 			rates.append((rr,nr))
 		iafile.close()
 #	print rates
@@ -151,6 +160,12 @@ def main(concurrent,n,lambd,iafile):
 		el=time.time()-strt
 		print "requests processed in time:%06f seconds, request rate approx: %f per sec"%(el,float(n)/el)
 	except KeyboardInterrupt:
+		print "received interrupt"
+		pool.terminate()
+		pool.join()
+		return
+	except:
+		print "received exception"
 		pool.terminate()
 		pool.join()
 		return
